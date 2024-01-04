@@ -1,0 +1,415 @@
+import pyodbc
+from datetime import datetime, timedelta
+
+# 資料庫連接設定
+driver = "{ODBC Driver 17 for SQL Server}"
+server = "DESKTOP-LA841E8"
+database = "text"
+username = "sa"
+password = "zzoo00789"
+conn = pyodbc.connect(f"DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}")
+
+def display_products():
+    search_keyword = input("請輸入要搜索的商品名稱或關鍵字（留空以顯示所有商品）：")
+    
+    cursor = conn.cursor()
+    if search_keyword:
+        # 使用商品名稱作為搜尋條件
+        query = "SELECT 商品編號, 商品名稱, 價格, 庫存, 賣家姓名 FROM 賣家商品 WHERE 商品名稱 LIKE ?"
+        cursor.execute(query, ('%' + search_keyword + '%',))
+    else:
+        query = "SELECT 商品編號, 商品名稱, 價格, 庫存, 賣家姓名 FROM 賣家商品"
+        cursor.execute(query)
+
+    print("\n=== 可購買的商品列表 ===")
+    for row in cursor.fetchall():
+        print(f"商品編號: {row[0]}, 名稱: {row[1]}, 價格: {row[2]}, 庫存: {row[3]}, 賣家: {row[4]}")
+
+
+    print("\n=== 可購買的商品列表 ===")
+    for row in cursor.fetchall():
+        # 取得賣家的姓氏（第一個字）
+        seller_lastname = row[4][0] + "賣家" if row[4] else "未知賣家"
+        print(f"商品編號: {row[0]}, 名稱: {row[1]}, 定價: {row[2]}, 庫存: {row[3]}, 賣家: {seller_lastname}")
+
+shopping_cart = []
+def buy_product():
+    display_products()
+    product_id = input("\n請輸入要購買的商品編號: ")
+    quantity = int(input("請輸入購買數量: "))
+    
+    cursor = conn.cursor()
+    query = "SELECT 價格, 庫存 FROM 賣家商品 WHERE 商品編號 = ?"
+    cursor.execute(query, (product_id,))
+    product_info = cursor.fetchone()
+    
+    if product_info and product_info[1] >= quantity:
+        total_cost = product_info[0] * quantity
+        update_seller_inventory(product_id, quantity)
+        order_id = generate_order(product_id, quantity)
+        print(f"購買成功！您的訂單編號為：{order_id}")
+        print(f"此次花費總計：{total_cost}元")
+    else:
+        print("庫存不足或商品不存在。")
+
+def check_product_stock(product_id, quantity):
+    cursor = conn.cursor()
+    query = "SELECT 庫存 FROM 賣家商品 WHERE 商品編號 = ?"
+    cursor.execute(query, (product_id,))
+    row = cursor.fetchone()
+    return row and row[0] >= quantity
+
+def update_seller_inventory(product_id, quantity):
+    cursor = conn.cursor()
+    update_query = "UPDATE 賣家商品 SET 庫存 = 庫存 - ? WHERE 商品編號 = ?"
+    cursor.execute(update_query, (quantity, product_id))
+    conn.commit()
+
+def generate_order(product_id, quantity):
+    cursor = conn.cursor()
+    query = "SELECT MAX(訂單編號) FROM 訂單"
+    cursor.execute(query)
+    last_order_id = cursor.fetchone()[0]
+    query_product_info = "SELECT 價格, 庫存 FROM 賣家商品 WHERE 商品編號 = ?"
+    cursor.execute(query_product_info, (product_id,))
+    product_info = cursor.fetchone()  
+    if last_order_id is None:
+        new_order_id = "S10000001"
+    else:
+        number_part = int(last_order_id[1:]) + 1
+        new_order_id = f"S{number_part:08d}"
+    delivery_method = input("請選擇送貨方式 (宅配/店到店/超商取貨): ").strip().upper()
+    delivery_date = (datetime.now() + timedelta(days=7)).date()
+    insert_query = "INSERT INTO 訂單 (訂單編號, 送貨方式, 送貨日期) VALUES (?, ?, ?)"
+    cursor.execute(insert_query, (new_order_id, delivery_method, delivery_date))
+    conn.commit()
+    if product_info and product_info[1] >= quantity:
+        total_cost = product_info[0] * quantity
+        print(f"此次訂單花費總計：{total_cost}元")
+        return new_order_id
+    else:
+        print("庫存不足或商品不存在。")
+        return None
+#訂單查詢函式
+
+def query_order_by_id():
+    order_id = input("請輸入訂單編號: ")
+    cursor = conn.cursor()
+    query = "SELECT * FROM 訂單 WHERE 訂單編號 = ?"
+    cursor.execute(query, (order_id,))
+    order = cursor.fetchone()
+    if order:
+        print(f"訂單編號: {order[0]}, 送貨方式: {order[1]}, 送貨日期: {order[2]}")
+    else:
+        print("查無訂單。")
+
+# 賣家管理函式
+def add_seller():
+    name = input("請輸入賣家姓名：")
+    address = input("請輸入賣家地址：")
+    bank_account = input("請輸入賣家銀行帳戶：")
+    email = input("請輸入賣家信箱：")
+    phone = input("請輸入賣家電話：")
+    
+    cursor = conn.cursor()
+    insert_query = "INSERT INTO 賣家 (姓名, 地址, 銀行帳戶, 信箱, 電話) VALUES (?, ?, ?, ?, ?)"
+    cursor.execute(insert_query, (name, address, bank_account, email, phone))
+    conn.commit()
+    print("已成功新增賣家！")
+
+def update_seller():
+    name = input("請輸入要修改的賣家姓名：")
+    new_name = input("請輸入新的姓名（若不修改，請直接按 Enter）：")
+    new_address = input("請輸入新的地址（若不修改，請直接按 Enter）：")
+    new_bank_account = input("請輸入新的銀行帳戶（若不修改，請直接按 Enter）：")
+    new_email = input("請輸入新的信箱（若不修改，請直接按 Enter）：")
+    new_phone = input("請輸入新的電話（若不修改，請直接按 Enter）：")
+    
+    cursor = conn.cursor()
+    
+    update_query = "UPDATE 賣家 SET "
+    set_values = []
+    params = []
+    
+    if new_name:
+        set_values.append("姓名 = ?")
+        params.append(new_name)
+    if new_address:
+        set_values.append("地址 = ?")
+        params.append(new_address)
+    if new_bank_account:
+        set_values.append("銀行帳戶 = ?")
+        params.append(new_bank_account)
+    if new_email:
+        set_values.append("信箱 = ?")
+        params.append(new_email)
+    if new_phone:
+        set_values.append("電話 = ?")
+        params.append(new_phone)
+    
+    if not set_values:
+        print("未提供任何更新資料。")
+        return
+    
+    update_query += ", ".join(set_values)
+    update_query += " WHERE 姓名 = ?"  
+    params.append(name)  
+    
+    cursor.execute(update_query, tuple(params))
+    conn.commit()
+    print(f"已成功更新 {name} 的資料！")
+
+def delete_seller():
+    name = input("請輸入要刪除的賣家姓名：")
+    delete_query = "DELETE FROM 賣家 WHERE 姓名 = ?"
+    cursor = conn.cursor()
+    cursor.execute(delete_query, (name,))
+    conn.commit()
+    print(f"已成功刪除 {name} 的資料！")
+
+def query_seller():
+    name = input("請輸入要查詢的賣家姓名：")
+    query = "SELECT * FROM 賣家 WHERE 姓名 = ?"
+    cursor = conn.cursor()
+    cursor.execute(query, (name,))
+    seller = cursor.fetchone()
+    
+    if seller:
+        print("賣家資料：")
+        print(f"姓名: {seller[0]}")
+        print(f"地址: {seller[1]}")
+        print(f"銀行帳戶: {seller[2]}")
+        print(f"信箱: {seller[3]}")
+        print(f"電話: {seller[4]}")
+    else:
+        print(f"找不到名為 {name} 的賣家資料。")
+        
+#買家管理函式
+def add_buyer():
+    name = input("請輸入買家姓名：")
+    address = input("請輸入買家地址：")
+    bank_account = input("請輸入買家銀行帳戶：")
+    email = input("請輸入買家信箱：")
+    phone = input("請輸入買家電話：")
+    
+    cursor = conn.cursor()
+    insert_query = "INSERT INTO 買家 (姓名, 地址, 銀行帳戶, 信箱, 電話) VALUES (?, ?, ?, ?, ?)"
+    cursor.execute(insert_query, (name, address, bank_account, email, phone))
+    conn.commit()
+    print("已成功新增買家！")
+def update_buyer():
+    name = input("請輸入要修改的買家姓名：")
+    cursor = conn.cursor()
+
+    print("請按需要更新的買家資訊（按 Enter 跳過不更新）:")
+    
+    new_address = input("新的地址 (若不更改則按 Enter)：").strip()
+    new_bank_account = input("新的銀行帳戶 (若不更改則按 Enter)：").strip()
+    new_email = input("新的信箱 (若不更改則按 Enter)：").strip()
+    new_phone = input("新的電話 (若不更改則按 Enter)：").strip()
+    
+    if new_address:
+        update_query = "UPDATE 買家 SET 地址 = ? WHERE 姓名 = ?"
+        cursor.execute(update_query, (new_address, name))
+        conn.commit()
+        print(f"已成功更新 {name} 的地址！")
+
+    if new_bank_account:
+        update_query = "UPDATE 買家 SET 銀行帳戶 = ? WHERE 姓名 = ?"
+        cursor.execute(update_query, (new_bank_account, name))
+        conn.commit()
+        print(f"已成功更新 {name} 的銀行帳戶！")
+
+    if new_email:
+        update_query = "UPDATE 買家 SET 信箱 = ? WHERE 姓名 = ?"
+        cursor.execute(update_query, (new_email, name))
+        conn.commit()
+        print(f"已成功更新 {name} 的信箱！")
+
+    if new_phone:
+        update_query = "UPDATE 買家 SET 電話 = ? WHERE 姓名 = ?"
+        cursor.execute(update_query, (new_phone, name))
+        conn.commit()
+        print(f"已成功更新 {name} 的電話！")
+
+def delete_buyer():
+    name = input("請輸入要刪除的買家姓名：")
+    delete_query = "DELETE FROM 買家 WHERE 姓名 = ?"
+    cursor = conn.cursor()
+    cursor.execute(delete_query, (name,))
+    conn.commit()
+    print(f"已成功刪除 {name} 的資料！")
+
+def query_buyer():
+    name = input("請輸入要查詢的買家姓名：")
+    query = "SELECT * FROM 買家 WHERE 姓名 = ?"
+    cursor = conn.cursor()
+    cursor.execute(query, (name,))
+    buyer = cursor.fetchone()
+    
+    if buyer:
+        print("買家資料：")
+        print(f"姓名: {buyer[0]}")
+        print(f"地址: {buyer[1]}")
+        print(f"銀行帳戶: {buyer[2]}")
+        print(f"信箱: {buyer[3]}")
+        print(f"電話: {buyer[4]}")
+    else:
+        print(f"找不到名為 {name} 的買家資料。")      
+# 商品管理函式
+        
+        
+def add_product():
+    seller_name = input("請輸入賣家姓名：")
+    product_id = input("請輸入商品編號：")
+    product_name = input("請輸入商品名稱：")
+    price = int(input("請輸入商品定價："))
+    stock = int(input("請輸入商品庫存："))
+    
+    cursor = conn.cursor()
+    insert_query = "INSERT INTO 賣家商品 (賣家姓名, 商品編號, 商品名稱, 價格, 庫存) VALUES (?, ?, ?, ?, ?)"
+    cursor.execute(insert_query, (seller_name, product_id, product_name, price, stock))
+    conn.commit()
+    print("已成功新增商品！")
+
+def update_product():
+    product_id = input("請輸入要修改的商品編號：")
+    new_price = int(input("請輸入新的定價："))
+    new_stock = int(input("請輸入新的庫存："))
+    
+    update_query = "UPDATE 賣家商品 SET 價格 = ?, 庫存 = ? WHERE 商品編號 = ?"
+    cursor = conn.cursor()
+    cursor.execute(update_query, (new_price, new_stock, product_id))
+    conn.commit()
+    print(f"已成功更新商品 {product_id} 的定價和庫存！")
+
+def delete_product():
+    product_id = input("請輸入要刪除的商品編號：")
+    delete_query = "DELETE FROM 賣家商品 WHERE 商品編號 = ?"
+    cursor = conn.cursor()
+    cursor.execute(delete_query, (product_id,))
+    conn.commit()
+    print(f"已成功刪除商品 {product_id} 的資料！")
+
+def query_product_by_seller():
+    seller_name = input("請輸入賣家名稱: ")  # 輸入賣家名稱
+    cursor = conn.cursor()
+    
+    # 使用輸入的賣家名稱來查詢該賣家的全部商品
+    query = "SELECT 商品編號, 商品名稱, 價格, 庫存 FROM 賣家商品 WHERE 賣家姓名 = ?"
+    cursor.execute(query, (seller_name,))
+    
+    print(f"\n==={seller_name} 的商品列表 ===")
+    for row in cursor.fetchall():
+        print(f"商品編號: {row[0]}, 商品名稱: {row[1]}, 價格: {row[2]}, 庫存: {row[3]}")
+
+        
+        
+# 商品管理主菜單
+def product_menu():
+    while True:
+        print("\n=== 商品管理 ===")
+        print("1. 新增商品")
+        print("2. 修改商品資料")
+        print("3. 刪除商品")
+        print("4. 查詢商品資料")
+        print("5. 返回賣家管理")
+        choice = input("請選擇功能：")
+        
+        if choice == "1":
+            add_product()
+        elif choice == "2":
+            update_product()
+        elif choice == "3":
+            delete_product()
+        elif choice == "4":
+            query_product_by_seller()
+        elif choice == "5":
+            print("返回賣家管理。")
+            break
+        else:
+            print("請輸入有效的選項！")
+
+# 賣家與商品管理
+def seller_main_menu():
+    while True:
+        print("\n=== 賣家與商品管理 ===")
+        print("1. 新增賣家")
+        print("2. 修改賣家資料")
+        print("3. 刪除賣家")
+        print("4. 查詢賣家資料")
+        print("5. 查詢訂單")
+        print("6. 進入商品管理")
+        print("7. 上一頁")
+        choice = input("請選擇功能：")
+        if choice == "1":
+            add_seller()
+        elif choice == "2":
+            update_seller()
+        elif choice == "3":
+            delete_seller()
+        elif choice == "4":
+            query_seller()
+        elif choice == "5":
+            query_order_by_id()
+        elif choice == "6":
+            product_menu()
+        elif choice == "7":
+            print("感謝使用賣家管理，再見！")
+            break
+
+#買家管理
+
+def buyer_main_menu():
+    while True:
+        print("\n=== 買家管理系統 ===")
+        print("1. 新增買家")
+        print("2. 修改買家資料")
+        print("3. 刪除買家")
+        print("4. 查詢買家資料")
+        print("5. 查看商品列表並購買")
+        print("6. 查詢訂單")
+        print("7. 退出系統")
+        
+        choice = input("請選擇功能：")
+        
+        if choice == "1":
+            add_buyer()
+        elif choice == "2":
+            update_buyer()
+        elif choice == "3":
+            delete_buyer()
+        elif choice == "4":
+            query_buyer()
+        elif choice == "5":
+            buy_product()
+        elif choice == "6":
+            query_order_by_id()
+        elif choice == "7":
+            print("感謝使用買家管理，再見！")
+            break
+        else:
+            print("請輸入有效的選項！")
+
+#主選單
+def main_menu():
+    while True:
+        print("\n=== 主選單 ===")
+        print("1. 賣家管理")
+        print("2. 買家管理")
+        print("3. 退出")
+        
+        choice = input("請選擇功能：")
+        
+        if choice == "1":
+            seller_main_menu()
+        elif choice == "2":
+            buyer_main_menu()
+        elif choice == "3":
+            print("感謝使用，再見！")
+            break
+        else:
+            print("請輸入有效的選項！")
+
+if __name__ == "__main__":
+    main_menu()
